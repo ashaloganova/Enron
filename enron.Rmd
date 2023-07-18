@@ -1,0 +1,388 @@
+---
+title: 'Взаимосвязи в компании: отчет'
+author: "Логанова Наталья, niloganova"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Загрузка данных
+
+```{r message = F}
+library(igraphdata)
+library(igraph)
+data(enron) 
+library(lubridate)
+source("~/shared/minor2_2022/2-tm-net/hw/personalTask.R")
+start_date = hw_net_get_start_date()
+# определяем конечную точку месяца
+last_date = start_date + dmonths(1)
+time = as_date(as_datetime(E(enron)$Time))
+# убираем вершины раньше начальной точки и позже конечной
+net = enron %>% delete_edges(E(enron)[time < start_date | time > last_date])
+# убираем связи вершины самой с собой (согласно данным, иногда люди себя в копию ставят)
+net = simplify(net, remove.multiple = F)
+# убираем обособленные вершины
+net = net %>% delete_vertices(V(net)[degree(net) == 0])
+```
+
+Анализируются данные с `r start_date` по `r last_date`
+
+## Описание сети
+
+Сеть **net** является подграфом сети Enron Email Network и состоит из вершин и ребер, которые находятся в интервале времени между 2000-01-31 10:30:00 и 2000-03-01 21:00:00.
+
+Атрибуты вершин в net соответствуют атрибутам вершин в исходной сети enron и включают:
+
+  - Email - адрес электронной почты сотрудника Enron
+  - Name - имя сотрудника
+  - Note - должность сотрудника
+  
+Атрибуты ребер в net также соответствуют атрибутам ребер в исходной сети enron и включают:
+
+  - Time - время отправки письма
+  - Reciptype - тип адресата (to, cc, bcc)
+  - Topic - номер топика, к которому отнесено письмо
+  - LDC_topic - номер темы, к которой отнесено письмо
+
+После обработки сеть net содержит **63 вершин** и **1129 связей**. Также это направленная сеть.
+
+```{r}
+number_of_vertices = vcount(net) # количество вершин
+number_of_edges = ecount(net) # количество ребер
+```
+
+**Визуализация сети**:
+
+Размер вершин зависит от их степени влиятельности (degree centrality). То есть самым большим будет вершина с наибольшим количеством связей, кому и отправляли (to, cc, bcc), и который больше всех отправлял. Названия вершин - это email адреса. Размер ребер зависит от количества связей между вершинами (веса ребер) и их прозрачности. Визуализация сделана с использованием layout.davidson.harel.
+```{r}
+plot(net, 
+     vertex.size = degree(net)/4,
+     vertex.label = V(net)$Email,
+     vertex.label.cex = degree(net)/120,
+     vertex.label.color = adjustcolor("dark blue", alpha.f = 0.7),
+     layout = layout.davidson.harel,
+     arrow.size = 0.001,
+     edge.arrow.size = 0.1,
+     vertex.dist = 200,
+     edge.alpha = 0.5,
+     edge.width = E(net)$weight/10)
+```
+
+### Выявление значимых вершин
+
+**Использованные меры центральности: **
+
+ - degree centrality
+ - betweenness centrality
+
+```{r}
+# Вычисляем degree centrality
+dc = degree(net)
+
+# Создаем датафрейм с именем вершины и ее degree centrality
+df_dc = data.frame(name = V(net)$Email, degree_centrality = dc)
+
+# Сортируем по убыванию degree centrality и берем 10 наиболее центральных вершин
+top10_dc = head(df_dc[order(-df_dc$degree_centrality), ], 10)
+
+# Создаем bar plot
+library(ggplot2)
+ggplot(top10_dc, aes(x = reorder(name, degree_centrality), y =  degree_centrality,fill = degree_centrality)) + 
+  geom_bar(stat = "identity") + 
+  labs(x = "Сотрудник", y = "Степень центральности", subtitle = 'по степени центральности degree centrality') + 
+  coord_flip() +
+  theme_bw() +
+  ggtitle("10 самых влиятельных вершин за февраль 2000 года") +
+  scale_fill_gradient(low = "#BCC2D9", high = "#242F53")
+```
+
+Я посмотрела degree centrality по общему количеству отправленных и полученных писем. Самым влиятельным оказался сотрудник **Tana Jones**. Теперь я бы хотела проверить, есть ли различие в том, кто больше всех отправлял и получал email-ы.
+
+```{r}
+# Вычисляем degree centrality
+dc_2 = degree(net, mode = 'in')
+
+# Создаем датафрейм с именем вершины и ее degree centrality
+df_dc_2 = data.frame(name = V(net)$Email, degree_centrality = dc_2)
+
+# Сортируем по убыванию degree centrality и берем 10 наиболее центральных вершин
+top10_dc_2 = head(df_dc_2[order(-df_dc_2$degree_centrality), ], 10)
+
+# Создаем bar plot
+library(ggplot2)
+ggplot(top10_dc_2, aes(x = reorder(name, degree_centrality), y =  degree_centrality,fill = degree_centrality)) + 
+  geom_bar(stat = "identity") + 
+  labs(x = "Сотрудник", y = "Степень центральности") + 
+  coord_flip() +
+  theme_bw() +
+  ggtitle("Кому больше всех отправляли письма") +
+  scale_fill_gradient(low = "#BCC2D9", high = "#242F53")
+```
+```{r}
+# Вычисляем degree centrality
+dc_3 = degree(net, mode = 'out')
+
+# Создаем датафрейм с именем вершины и ее degree centrality
+df_dc_3 = data.frame(name = V(net)$Email, degree_centrality = dc_3)
+
+# Сортируем по убыванию degree centrality и берем 10 наиболее центральных вершин
+top10_dc_3 = head(df_dc_3[order(-df_dc_3$degree_centrality), ], 10)
+
+# Создаем bar plot
+library(ggplot2)
+ggplot(top10_dc_3, aes(x = reorder(name, degree_centrality), y =  degree_centrality,fill = degree_centrality)) + 
+  geom_bar(stat = "identity") + 
+  labs(x = "Сотрудник", y = "Степень центральности") + 
+  coord_flip() +
+  theme_bw() +
+  ggtitle("Кто больше всех отправлял письма") +
+  scale_fill_gradient(low = "#BCC2D9", high = "#242F53")
+```
+
+Получилось, что больше всех писем отправлял **Tana Jones**, а больше всех получал - **Mark Taylor**, при чем Tana Jones не попал в топ-10 людей, кто больше всех получал, хотя по общему количеству связей этот человек побеждает. Поэтому мне стало интересно, какую должность в компании он занимал, однако информации по этому показателю не оказалось в сети. Может он был спамером, кто рассылал всем сотрудникам, или он работал в информационном отделе.
+```{r}
+# Получаем номер вершины, у которой Email равен 'tana.jones'
+vertex_id = which(V(net)$Email == 'tana.jones')
+
+# Получаем значение атрибута 'Note' для данной вершины
+position = V(net)$Note[vertex_id]
+
+```
+
+Теперь посмотрим, какой сотрудник является самым влиятельным по показателю центральности по битвинности.
+
+```{r}
+# Вычисляем betweenness centrality
+bc = betweenness(net)
+
+# Создаем датафрейм с именем вершины и ее betweenness centrality
+df_bc = data.frame(name = V(net)$Email, betweenness_centrality = bc)
+
+# Сортируем по убыванию betweenness centrality и берем 10 наиболее центральных вершин
+top10_bc = head(df_bc[order(-df_bc$betweenness_centrality), ], 10)
+
+# Создаем bar plot
+library(ggplot2)
+ggplot(top10_bc, aes(x = reorder(name, betweenness_centrality), y =  betweenness_centrality, fill = betweenness_centrality)) + 
+  geom_bar(stat = "identity") + 
+  labs(x = "Сотрудник", y = "Степень центральности", subtitle = 'по степени центральности betweenness') + 
+  coord_flip() +
+  theme_bw() +
+  ggtitle("10 самых влиятельных вершин в сети") +
+  scale_fill_gradient(low = "#C0D9BC", high = "#1A3F24")
+```
+
+Мера центральности по посредничеству (betweenness centrality) для сети net показывает, какие вершины сети являются ключевыми в пересылке сообщений между другими вершинами. Чем выше значение меры центральности по битвинности для вершины, тем больше кратчайших путей проходит через нее в сети. Таким образом, вершины с более высокой мерой центральности по битвинности играют более важную роль в передаче информации между другими вершинами в сети. Самым влиятельным сотрудником по этому показателю оказался **Louise Kitchen**. Его должность - President, Enron Online. 
+
+```{r}
+# Получаем номер вершины, у которой Email равен 'louise.kitchen'
+vertex_id2 = which(V(net)$Email == 'louise.kitchen')
+
+# Получаем значение атрибута 'Note' для данной вершины
+position2 = V(net)$Note[vertex_id2]
+```
+
+### Выявление сообществ
+
+**Использованные меры выделения сообществ: **
+
+  - walktrap
+  - infomap
+
+```{r}
+wtcommune = walktrap.community(net)
+
+walktrap_groups = table(membership(wtcommune))
+
+V(net)$wtcommune = membership(wtcommune)
+plot(net, vertex.color = V(net)$wtcommune, vertex.label = NA)
+```
+
+Walktrap - это подход, основанный на случайных путях. Основная идея -- если случайно "блуждать" по графу, то больше шансов, что ваш путь будет чаще оставаться внутри сообщества и только иногда выходить за его пределы. В данном случае это значит, что письма отправляются чаще внутри 6 групп.
+
+Теперь попробую выделить сообщества через метод Infomap.
+
+```{r}
+infomap_communities = infomap.community(net)
+V(net)$community_infomap = membership(infomap_communities)
+plot(net, vertex.color = V(net)$community_infomap, vertex.label = NA)
+infomap_groups = table(membership(infomap_communities))
+```
+
+Infomap пытается найти такое разделение сети на сообщества, которое минимизирует длину кодирования, используемую для описания процесса перемещения в сети. В методе Infomap при выделении сообществ используется алгоритм максимизации модулярности, который определяет количество сообществ и их состав в зависимости от структуры сети и весов ребер. Таким образом, при каждом запуске алгоритма могут получаться разные результаты. В этих данных количество групп получалось 7, 8, 10 и 12. 
+
+
+### Исследовательские вопросы
+
+**Вопрос 1:** правда ли, что внутри группы общаются преимущественно на 1 тему?
+
+Посмотрим, какие темы есть по атрибуту LDC_topic
+```{r}
+table(E(net)$LDC_topic)
+```
+
+Есть только значения 0 и -1, которые значат, что письмо не относится ни к одному из выделенных топиков, слишком мало слов в сообщении или что слов в сообщении достаточно, но письмо не удалось отнести ни к одной из 32 тем. 
+Это нам не поможет, поэтому посмотрим, какие темы выделены по атрибуту Topic:
+
+```{r}
+table(E(net)$Topic)
+```
+
+Уже хорошо, так как есть целых 3 выделенных темы. Топик = 0 значит, что письмо не относится ни к одному из выделенных топиков.
+
+Буду рассматривать выделенные ранее группы по методу walktrap.
+
+```{r message = FALSE, warning=FALSE}
+library(igraph)
+library(dplyr)
+
+edge_list <- get.data.frame(net, what = "edges")
+colnames(edge_list) <- c("From", "To", "Time", "Reciptype", "Topic", "LDC_topic")
+
+a = (1:63)
+c = as.vector(membership(wtcommune))
+
+df = data.frame(To = a, Group = c)
+
+edge_list_part = edge_list %>% 
+  select(From, To, Topic) %>% 
+  left_join(df, edge_list_part, by = "To") %>% 
+  rename(Group_To = Group)
+
+df = data.frame(From = a, Group = c)
+
+edge_list_part = edge_list_part %>% 
+  left_join(df, edge_list_part, by = "From") %>% 
+  rename(Group_From = Group)
+
+edge_list_part = edge_list_part %>% 
+  filter (Group_To == Group_From) #удаляю сообщения, которые не внутри одной группы отправлены
+
+edge_list_part = edge_list_part %>% 
+  select (From, To, Topic, Group_To) %>% 
+  rename(Group = Group_To)
+
+groups_by_topic = edge_list_part %>% 
+  group_by (Group, Topic) %>% 
+  count()
+
+# вычисление общего количества строк в каждой группе
+total_counts_by_group <- groups_by_topic %>% 
+  group_by(Group) %>% 
+  summarise(total_count = sum(n))
+
+# добавление столбца percent
+groups_by_topic <- groups_by_topic %>% 
+  left_join(total_counts_by_group, by = "Group") %>% # объединение с общим количеством строк в каждой группе
+  mutate(Percent = round(n * 100 / total_count, 2))
+
+groups_by_topic_percent = groups_by_topic %>% 
+  select (Group, Topic, Percent)
+
+groups_by_topic_percent$Topic = as.character(groups_by_topic_percent$Topic)
+
+ggplot(groups_by_topic_percent, aes(x = factor(Group), y = Percent, fill = Topic ), position = "dodge") +
+  geom_bar(stat = "identity") + 
+  labs(x = "Группа", y = "Количество писем") +
+  ggtitle("Распределение тем при общении внутри групп") +
+  scale_fill_brewer(name = "Номер\nтемы", palette = "Set1") +
+  theme_bw() 
+
+```
+
+Я создала таблицу, в которой каждая строка представляет собой одну связь между вершинами. Таблица содержит столбцы "From", "To" и "Topic". Далее, я с помощью функции left_join добавила информацию о том, к какой группе относятся отправитель и получатель. Затем я отобрала только те связи, которые находятся между вершинами, принадлежащими одной и той же группе (потому что я хочу проверить, общаются ли люди внутри одной группы на одну тему). Затем выявила в процентном соотношении, сколько занимает определенная тема в общении внутри каждой группы.
+
+По полученной диаграмме можно увидеть, что в каждой выделенной по методу walktrap группе есть топик, который занимает больше 50% всех связей внутри этой группы. **Значит, можно прийти к выводу, что внутри одной группы люди преимущественно общаются на 1 тему.**
+
+
+**Вопрос 2:** правда ли, что у сотрудников с большим количеством входящих писем обычно более высокая должность
+
+```{r}
+positions = V(net)$Note
+df1 = data.frame(To = a, Position = positions)
+
+edge_list_to = edge_list %>% 
+  select(To) %>% 
+  left_join(df1, edge_list_to, by = "To") 
+
+edge_list_to$Position <- gsub(",.*", "", edge_list_to$Position)
+
+edge_list_to = edge_list_to  %>% 
+  group_by (Position) %>% 
+  count() %>% 
+  filter (Position != 'NA')
+
+ggplot(edge_list_to, aes(x = reorder(Position, n), y =  n, fill = n)) +
+  geom_bar(stat = "identity") + 
+  labs(x = "Должность", y = "Количество полученных писем") + 
+  coord_flip() +
+  theme_bw() +
+  ggtitle("Количество полученных писем \nв зависимости от должности") +
+  scale_fill_gradient(low = "#C0D9BC", high = "#1A3F24") +
+  theme(legend.position = "none")
+```
+
+Этот исследовательский вопрос не подтвердился, так как больше всех писем получала позиция "Employee", а CEO, самая высокая должность в иерархической структуре, занимает 7 место из 9.
+
+**Вывод:** не у самых высокодолжностных работников большее количество входящих писем.
+
+## Место сотрудника в сети
+
+```{r}
+hw_net_get_vertex(net)
+```
+
+```{r}
+head(arrange(df_dc, -degree_centrality), 10)
+
+out = degree(net, 8, mode = 'out')
+in1 = degree(net, 8, mode = 'in')
+```
+
+Сотрудник Elizabeth Sager занимает 10 место по degree centrality. Это значит, что у нее много связей, то есть она много отправляет/получает писем. Ее degree centrality = 75, это значит, что за месяц у нее было столько коммуникации в почте. Она отправляла письма 43 раза, получала - 32.
+
+```{r}
+head(arrange(df_bc, -betweenness_centrality), 10)
+```
+
+Сотрудник Elizabeth Sager занимает 8 место по betweenness centrality. Это значит, что довольно часто вершина находится на кратчайшем пути между двумя другими вершинами в графе.
+
+```{r}
+group_es = df$Group[df$From == '8']
+
+V(net)$label <- V(net)$Name
+
+V(net)$wtcommune = membership(wtcommune)
+
+plot(net, vertex.color = ifelse(V(net) == "8", "red", V(net)$wtcommune), 
+     vertex.label.color = ifelse(V(net) == "8", "black", "white"), 
+     vertex.label.dist = 1, vertex.label.font = 2, vertex.label.family = "sans",
+     vertex.label = ifelse(V(net) == "8", as.character(V(net)$Name), NA),
+     vertex.alpha = ifelse(V(net) == "8", 1, 0))
+```
+
+Сотрудник Elizabeth Sager принадлежить группе 6 при выделении сообществ через метод walktrap.
+
+```{r}
+position_es = df1$Position[df1$To == '8']
+```
+Ее должность - "Employee". 
+
+По сотруднику Elizabeth Sager можно сделать вывод, что она довольно часто общалась в феврале 2000 года. Также она связывала кратчайшие пути (путь = письмо). То есть она входила в число влиятельных людей по мерам центральности degree и betweenness. Кроме этого, она входила в группу 6, где преимущественно общались на тему 1.
+
+## Общие выводы
+
+> В результате анализа части сети Enron за месяц февраль было выявлено, что сотрудник Tana Jones является наиболее влиятельным, основываясь на показателе degree centrality. Далее было проведено сравнение количества отправленных и полученных писем, где наибольшим отправителем оказался Tana Jones, а наибольшим получателем - Mark Taylor. Однако, Tana Jones не входит в топ-10 получателей, что вызвало вопросы о его должности в компании.
+
+> Далее были применены различные методы выделения сообществ, такие как Walktrap и Infomap. Walktrap выявил наиболее частые связи внутри 6 групп, а Infomap при каждом запуске давал разное количество сообществ, в данном случае - 7, 8, 10 и 12.
+
+> Было проверено 2 исследовательских вопроса: Внутри одной группы люди преимущественно общаются на одну тему. И количество входящих писем не коррелирует с должностью сотрудника.
+
+> Кроме того, сотрудник Elizabeth Sager является влиятельным членом сети по мерам центральности degree и betweenness, и принадлежит к группе 6, где преимущественно общались на тему 1.
+
+> В заключение хотела бы сказать, что данный анализ позволил получить представление о структуре сети net и ее ключевых участниках.
